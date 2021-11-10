@@ -3,22 +3,30 @@
 package main
 
 import (
-	//"github.com/davecgh/go-spew/spew"
-
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/rapidloop/skv"
 )
 
+func GetMD5Hash(text string) string {
+	hasher := md5.New()
+	hasher.Write([]byte(text))
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
 func main() {
-	fmt.Println("Starting …")
+	currentTime := time.Now()
+	fmt.Println("Starting … ", currentTime.Format("2006-01-02 15:04:05"))
 
 	/* get discord webhook url */
 	discordWebhook := flag.String("discord", "127.0.0.1", "Discord webhook URL")
@@ -30,7 +38,8 @@ func main() {
 	 *
 	 */
 	url := "https://dev.twitch.tv/docs/change-log"
-	resp, err := http.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	resp, _ := http.DefaultClient.Do(req)
 	// handle the error if there is one
 	if err != nil {
 		panic(err)
@@ -87,6 +96,8 @@ func main() {
 		panic(err)
 	}
 
+	hashedContent := GetMD5Hash(changeLogDetails)
+
 	var info string
 	err = store.Get("last-twitch-version", &info)
 	if err != nil {
@@ -101,8 +112,28 @@ func main() {
 		}
 	}
 
+	fmt.Println("Last stored version : ", info, " and changelog date is : ", changeLogDate)
+
 	/* If last change already store, just exit */
 	if info == changeLogDate {
+		return
+	}
+
+	// check if value is already stored
+	err = store.Get("stored::"+hashedContent, &info)
+	if err != nil {
+		if err.Error() == "skv: key not found" {
+			// init
+			err = store.Put("stored::"+hashedContent, "stored")
+			if err != nil {
+				panic(err)
+			}
+		} else {
+			panic(err)
+		}
+	}
+
+	if info == "stored" {
 		return
 	}
 
@@ -123,7 +154,7 @@ func main() {
 	var jsonStr = []byte(`{"content": "**[` + changeLogDate + `]** \n\n` + changeLogDetails + `"}`)
 
 	url = *discordWebhook
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
+	req, err = http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
